@@ -1,58 +1,213 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import heroImg from "@/assets/hero-barcelona.jpg";
-import beachImg from "@/assets/beach.jpg";
-import gothicImg from "@/assets/gothic.jpg";
-import rooftopImg from "@/assets/rooftop.jpg";
-import clubImg from "@/assets/club.jpg";
-import tapasImg from "@/assets/tapas.jpg";
-import sidequestImg from "@/assets/sidequest.jpg";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { Environment, Lightformer, MeshDistortMaterial } from "@react-three/drei";
+import * as THREE from "three";
+import {
+  CircleDollarSign,
+  Dice5,
+  Landmark,
+  Martini,
+  Plane,
+  Sparkles,
+  ShieldAlert,
+  Users,
+} from "lucide-react";
+import barcelonaPanorama from "@/assets/barcelona-route-panorama.png";
 
 export const Route = createFileRoute("/")({
-  head: () => ({
-    meta: [
-      { title: "Βαρκελώνη: 2 Οκτωβρίου — Mission Control" },
-      {
-        name: "description",
-        content:
-          "4 παιδιά. Μία πόλη. Μηδέν φυσιολογικές νύχτες. Επίσημο briefing για το ταξίδι στη Βαρκελώνη, 2 Οκτωβρίου 2026.",
-      },
-      { property: "og:title", content: "Η ΒΑΡΚΕΛΩΝΗ ΔΕΝ ΕΙΝΑΙ ΕΤΟΙΜΗ" },
-      {
-        property: "og:description",
-        content: "Η 2 Οκτωβρίου δεν είναι ημερομηνία. Είναι προειδοποίηση.",
-      },
-      { property: "og:image", content: heroImg },
-      { name: "twitter:image", content: heroImg },
-    ],
-  }),
-  component: BarcelonaPage,
+  head: () => ({ meta: [{ title: "BCN · 02.10.26 — Mission Dossier" }] }),
+  component: V1,
 });
 
+/* ─────────────────────────── data ─────────────────────────── */
+
+const SCROLL_VH = 540;
 const TRIP_DATE = new Date("2026-10-02T08:00:00+02:00").getTime();
+
+const CHAPTERS = [
+  {
+    n: "00",
+    place: "Mission Control",
+    camera: { travel: 0, y: 10, scale: 1.04, rotate: -0.2 },
+  },
+  {
+    n: "01",
+    place: "The Squad",
+    camera: { travel: 0.3, y: 2, scale: 1.08, rotate: 0.12 },
+  },
+  {
+    n: "02",
+    place: "Target Zones",
+    camera: { travel: 0.62, y: -6, scale: 1.12, rotate: -0.12 },
+  },
+  {
+    n: "03",
+    place: "Night Systems",
+    camera: { travel: 0.96, y: -12, scale: 1.16, rotate: 0.08 },
+  },
+] as const;
+
+const CREW = [
+  {
+    id: "evag",
+    name: "EVAG",
+    role: "Mission Control",
+    signature: "Hype Architect",
+    stat: "99",
+    statLabel: "hype",
+    move: "Λέει «αυτό είναι content» τουλάχιστον 14 φορές τη νύχτα.",
+    accent: "#ffd16f",
+  },
+  {
+    id: "stavros",
+    name: "STAVROS",
+    role: "Chaotic Legend",
+    signature: "Financial Delusion",
+    stat: "€2000",
+    statLabel: "stavros tax",
+    move: "Διεθνής διπλωματία σε σπαστά Ισπανικά, ακριβώς στις 01:00.",
+    accent: "#ff5f8e",
+  },
+  {
+    id: "giorgos",
+    name: "GIORGOS",
+    role: "Loyal Comedian",
+    signature: "Love-of-Game Pulls",
+    stat: "20",
+    statLabel: "pulls",
+    move: "Ανοίγει WhatsApp στη μέση κάθε σοβαρής στιγμής.",
+    accent: "#ff8a4a",
+  },
+  {
+    id: "stefanos",
+    name: "STEFANOS",
+    role: "Beach-Dance Menace",
+    signature: "Tango Unlock",
+    stat: "98",
+    statLabel: "tango",
+    move: "Ξεκλειδώνει tango στο πιο ακατάλληλο σημείο της πόλης.",
+    accent: "#66d9ff",
+  },
+] as const;
+
+const ZONES = [
+  { name: "Barceloneta", objective: "Stefanos emotional overload", risk: 4 },
+  { name: "Gothic Quarter", objective: "Χαθείτε επίτηδες στα σοκάκια", risk: 2 },
+  { name: "Rooftop Bars", objective: "Κάντε ότι είστε luxury documentary", risk: 3 },
+  { name: "Nightclubs", objective: "Stavros Dance Move Vol. 2", risk: 5 },
+  { name: "Tapas", objective: "Άλλο ένα πιάτο. Και άλλο ένα.", risk: 2 },
+  { name: "Side Quests", objective: "Αποφυγή βιολογικού πολέμου στο Airbnb", risk: 5 },
+] as const;
+
+const PROPHECIES = [
+  "Ο Stavros θα πει κάτι παράνομο σε σπαστά Ισπανικά.",
+  "Ο Giorgos θα ανοίξει WhatsApp στη μέση της κουβέντας.",
+  "Ο Stefanos θα φωτογραφίσει μια καρέκλα σαν να είναι το Λούβρο.",
+  "Ο Evag θα πει «αυτό είναι content» τουλάχιστον 14 φορές.",
+  "Κάποιος θα πει «ένα ποτό». Οκτώ ποτά μετά, η άρνηση συνεχίζεται.",
+  "Tango θα ξεκλειδωθεί στο πιο ακατάλληλο μέρος.",
+] as const;
+
+const BUDGET = [
+  { label: "Flights", expected: 250, actual: 310 },
+  { label: "Hotel", expected: 400, actual: 520 },
+  { label: "Food", expected: 200, actual: 380 },
+  { label: "Clubs", expected: 300, actual: 740 },
+  { label: "Stavros Tax", expected: 800, actual: 2000 },
+] as const;
+
+const NIGHT = [
+  { t: "22:00", text: "Όλοι λένε ότι απόψε θα είναι chill." },
+  { t: "23:30", text: "Πρώτη κακή οικονομική απόφαση." },
+  { t: "01:00", text: "Ο Stavros αρχίζει διεθνή διπλωματία." },
+  { t: "02:15", text: "Ο Giorgos γίνεται comedian." },
+  { t: "03:00", text: "Ο Stefanos ξεκλειδώνει tango." },
+  { t: "04:30", text: "Κάποιος λέει «άλλο ένα μέρος»." },
+  { t: "06:00", text: "Κανείς δεν ξέρει πώς φτάσαμε εδώ." },
+] as const;
+
+/* ─────────────────────────── utils ─────────────────────────── */
+
+function clamp(v: number, min = 0, max = 1) {
+  return Math.min(max, Math.max(min, v));
+}
+function mix(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+function easeInOut(t: number) {
+  return t * t * (3 - 2 * t);
+}
+/** map a sub-range of global progress to 0..1 */
+function band(p: number, start: number, end: number) {
+  return clamp((p - start) / (end - start));
+}
 
 /* ─────────────────────────── hooks ─────────────────────────── */
 
-function prefersReducedMotion() {
-  return (
-    typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
-  );
+function useReduced() {
+  const [r, setR] = useState(false);
+  useEffect(() => {
+    const m = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setR(m.matches);
+    const h = () => setR(m.matches);
+    m.addEventListener?.("change", h);
+    return () => m.removeEventListener?.("change", h);
+  }, []);
+  return r;
+}
+
+function useScrollProgress() {
+  const [progress, setProgress] = useState(0);
+  const ref = useRef(0);
+  useEffect(() => {
+    let raf = 0;
+    const update = () => {
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const p = max > 0 ? clamp(window.scrollY / max) : 0;
+      ref.current = p;
+      setProgress(p);
+      raf = 0;
+    };
+    const req = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", req, { passive: true });
+    window.addEventListener("resize", req);
+    return () => {
+      window.removeEventListener("scroll", req);
+      window.removeEventListener("resize", req);
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, []);
+  return [progress, ref] as const;
+}
+
+function useMouseRef(reduced: boolean) {
+  const ref = useRef({ x: 0, y: 0 });
+  useEffect(() => {
+    if (reduced) return;
+    const h = (e: PointerEvent) => {
+      ref.current.x = (e.clientX / window.innerWidth) * 2 - 1;
+      ref.current.y = -((e.clientY / window.innerHeight) * 2 - 1);
+    };
+    window.addEventListener("pointermove", h);
+    return () => window.removeEventListener("pointermove", h);
+  }, [reduced]);
+  return ref;
 }
 
 function useCountdown(target: number) {
-  const [mounted, setMounted] = useState(false);
   const [now, setNow] = useState(target);
   useEffect(() => {
-    setMounted(true);
     setNow(Date.now());
-    const id = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(id);
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
   }, []);
   const diff = Math.max(0, target - now);
   return {
-    mounted,
     days: Math.floor(diff / 86_400_000),
     hours: Math.floor((diff / 3_600_000) % 24),
     minutes: Math.floor((diff / 60_000) % 60),
@@ -60,1449 +215,773 @@ function useCountdown(target: number) {
   };
 }
 
-/** Reveal-on-scroll for any element tagged `.reveal-on-scroll`. */
-function useReveal() {
-  useEffect(() => {
-    const els = document.querySelectorAll(".reveal-on-scroll");
-    if (prefersReducedMotion()) {
-      els.forEach((el) => el.classList.add("is-visible"));
-      return;
-    }
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) {
-            e.target.classList.add("is-visible");
-            io.unobserve(e.target);
-          }
-        });
-      },
-      { threshold: 0.12 },
-    );
-    els.forEach((el) => io.observe(el));
-    return () => io.disconnect();
-  }, []);
-}
-
-/** Lightweight rAF parallax for [data-speed] elements. */
-function useParallax() {
-  useEffect(() => {
-    if (prefersReducedMotion()) return;
-    const els = Array.from(document.querySelectorAll<HTMLElement>("[data-speed]"));
-    if (!els.length) return;
-    let raf = 0;
-    const update = () => {
-      const vh = window.innerHeight;
-      for (const el of els) {
-        const speed = parseFloat(el.dataset.speed || "0");
-        const rect = el.getBoundingClientRect();
-        const center = rect.top + rect.height / 2;
-        const offset = (center - vh / 2) * speed;
-        el.style.setProperty("--py", `${offset.toFixed(1)}px`);
-      }
-      raf = 0;
-    };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, []);
-}
-
-function useInView<T extends HTMLElement>(threshold = 0.25) {
-  const ref = useRef<T>(null);
-  const [seen, setSeen] = useState(false);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    if (prefersReducedMotion()) {
-      setSeen(true);
-      return;
-    }
-    const io = new IntersectionObserver(
-      ([e]) => {
-        if (e.isIntersecting) {
-          setSeen(true);
-          io.disconnect();
-        }
-      },
-      { threshold },
-    );
-    io.observe(el);
-    return () => io.disconnect();
-  }, [threshold]);
-  return [ref, seen] as const;
-}
-
-function useCountUp(target: number, run: boolean, dur = 1400) {
-  const [val, setVal] = useState(0);
+function useCountUp(target: number, run: boolean, reduced: boolean, dur = 1500) {
+  const [v, setV] = useState(0);
   useEffect(() => {
     if (!run) return;
-    if (prefersReducedMotion()) {
-      setVal(target);
+    if (reduced) {
+      setV(target);
       return;
     }
     let raf = 0;
     const start = performance.now();
     const tick = (t: number) => {
       const p = Math.min(1, (t - start) / dur);
-      setVal(Math.round(target * (1 - Math.pow(1 - p, 3))));
+      setV(Math.round(target * (1 - Math.pow(1 - p, 3))));
       if (p < 1) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [target, run, dur]);
-  return val;
+  }, [target, run, reduced, dur]);
+  return v;
 }
 
-function useActiveSection(ids: string[]) {
-  const [active, setActive] = useState(ids[0] ?? "");
-  useEffect(() => {
-    const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((e) => {
-          if (e.isIntersecting) setActive(e.target.id);
-        });
-      },
-      { rootMargin: "-45% 0px -50% 0px" },
-    );
-    ids.forEach((id) => {
-      const el = document.getElementById(id);
-      if (el) io.observe(el);
-    });
-    return () => io.disconnect();
-  }, [ids.join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
-  return active;
+function getActiveIndex(p: number) {
+  return Math.min(CHAPTERS.length - 1, Math.floor(p * CHAPTERS.length + 0.16));
+}
+function getCamera(p: number) {
+  const raw = p * (CHAPTERS.length - 1);
+  const i = Math.min(CHAPTERS.length - 2, Math.floor(raw));
+  const local = easeInOut(clamp(raw - i));
+  const a = CHAPTERS[i].camera;
+  const b = CHAPTERS[i + 1].camera;
+  return {
+    travel: mix(a.travel, b.travel, local),
+    y: mix(a.y, b.y, local),
+    scale: mix(a.scale, b.scale, local),
+    rotate: mix(a.rotate, b.rotate, local),
+  };
 }
 
-/* ─────────────────────────── page ─────────────────────────── */
+/* ─────────────────────── WebGL centerpiece ─────────────────────── */
 
-function BarcelonaPage() {
-  useReveal();
-  useParallax();
+function MissionCore({
+  progressRef,
+  mouseRef,
+  reduced,
+}: {
+  progressRef: React.RefObject<number>;
+  mouseRef: React.RefObject<{ x: number; y: number }>;
+  reduced: boolean;
+}) {
+  const grp = useRef<THREE.Group>(null);
+  useFrame((_, dt) => {
+    const g = grp.current;
+    if (!g) return;
+    const p = progressRef.current ?? 0;
+    // prominent in the hero, recedes after, returns for the closer
+    const hero = 1 - band(p, 0.0, 0.15);
+    const end = band(p, 0.9, 1) * 0.85;
+    const presence = Math.max(hero, end);
+    const target = 0.04 + presence * 0.82;
+    g.scale.setScalar(THREE.MathUtils.lerp(g.scale.x, target, 0.15));
+    if (!reduced) g.rotation.y += dt * 0.22;
+    g.rotation.z += dt * 0.03;
+    const mx = mouseRef.current?.x ?? 0;
+    const my = mouseRef.current?.y ?? 0;
+    // float to the right of the headline in the hero; center for the closer
+    const biasX = hero * 2.1;
+    g.position.x = THREE.MathUtils.lerp(g.position.x, mx * 0.5 + biasX, 0.06);
+    g.position.y = THREE.MathUtils.lerp(g.position.y, my * 0.4 + (1 - presence) * 0.8, 0.06);
+  });
   return (
-    <main className="grain relative min-h-screen overflow-hidden bg-background text-foreground">
-      <ScrollProgress />
-      <AmbientGlow />
-      <Nav />
-      <Hero />
-      <Marquee />
-      <Squad />
-      <MissionMap />
-      <Prophecy />
-      <Budget />
-      <NightSimulator />
-      <Evidence />
-      <Rules />
-      <FinalCTA />
-      <Footer />
-    </main>
+    <group ref={grp}>
+      <mesh>
+        <icosahedronGeometry args={[1.5, 24]} />
+        <MeshDistortMaterial
+          color="#ff4f93"
+          metalness={1}
+          roughness={0.12}
+          clearcoat={1}
+          clearcoatRoughness={0.16}
+          envMapIntensity={1.45}
+          distort={reduced ? 0.16 : 0.42}
+          speed={reduced ? 0 : 1.6}
+        />
+      </mesh>
+    </group>
   );
 }
 
-function ScrollProgress() {
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let raf = 0;
-    const update = () => {
-      const h = document.documentElement;
-      const max = h.scrollHeight - h.clientHeight;
-      el.style.setProperty("--progress", String(max > 0 ? h.scrollTop / max : 0));
-      raf = 0;
-    };
-    const onScroll = () => {
-      if (!raf) raf = requestAnimationFrame(update);
-    };
-    update();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("resize", onScroll);
-    return () => {
-      window.removeEventListener("scroll", onScroll);
-      window.removeEventListener("resize", onScroll);
-    };
-  }, []);
+function CoreCanvas({
+  progressRef,
+  mouseRef,
+  reduced,
+}: {
+  progressRef: React.RefObject<number>;
+  mouseRef: React.RefObject<{ x: number; y: number }>;
+  reduced: boolean;
+}) {
   return (
-    <div className="fixed inset-x-0 top-0 z-[60] h-[3px] bg-transparent" aria-hidden>
+    <Canvas
+      className="!pointer-events-none"
+      dpr={[1, 1.6]}
+      camera={{ position: [0, 0, 5], fov: 42 }}
+      gl={{ alpha: true, antialias: true, powerPreference: "high-performance" }}
+      style={{ background: "transparent" }}
+    >
+      <ambientLight intensity={0.4} />
+      <MissionCore progressRef={progressRef} mouseRef={mouseRef} reduced={reduced} />
+      <Environment resolution={256} frames={1}>
+        <Lightformer
+          form="rect"
+          intensity={2.2}
+          position={[0, 4, 4]}
+          scale={[10, 10, 1]}
+          color="#ffffff"
+        />
+        <Lightformer
+          form="rect"
+          intensity={3}
+          position={[-6, 2, 2]}
+          scale={[3, 10, 1]}
+          color="#ff5f8e"
+        />
+        <Lightformer
+          form="circle"
+          intensity={2.6}
+          position={[6, -2, 3]}
+          scale={[5, 5, 1]}
+          color="#66d9ff"
+        />
+        <Lightformer
+          form="ring"
+          intensity={2}
+          position={[3, 4, -3]}
+          scale={[5, 5, 1]}
+          color="#ffd16f"
+        />
+      </Environment>
+    </Canvas>
+  );
+}
+
+/* ─────────────────────── cinematic backdrop ─────────────────────── */
+
+function CityFilm({ progress }: { progress: number }) {
+  const camera = useMemo(() => getCamera(progress), [progress]);
+  const active = CHAPTERS[getActiveIndex(progress)];
+  const vw = typeof window !== "undefined" ? window.innerWidth : 1280;
+
+  return (
+    <div className="fixed inset-0 z-0 overflow-hidden bg-[#050510]">
       <div
-        ref={ref}
-        className="scroll-progress h-full w-full bg-[linear-gradient(90deg,var(--gold),var(--neon),var(--blood))]"
+        className="absolute left-0 top-0 h-[100dvh] w-[190vw] will-change-transform"
+        style={{
+          transform: `translate3d(${-camera.travel * vw * 0.9}px, ${camera.y}px, 0) scale(${camera.scale}) rotate(${camera.rotate}deg)`,
+          transformOrigin: "0% 52%",
+          transition: "transform 110ms linear",
+        }}
+      >
+        <img
+          alt=""
+          className="absolute inset-0 h-full w-full select-none object-cover"
+          draggable={false}
+          src={barcelonaPanorama}
+        />
+      </div>
+      {/* legibility + atmosphere */}
+      <div className="absolute inset-0 bg-[linear-gradient(90deg,rgba(5,5,16,0.92)_0%,rgba(5,5,16,0.66)_30%,rgba(5,5,16,0.18)_56%,rgba(5,5,16,0.4)_100%)]" />
+      <div className="absolute inset-x-0 bottom-0 h-1/3 bg-gradient-to-t from-[#050510] to-transparent" />
+      <div
+        className="absolute inset-0 mix-blend-screen transition-[background] duration-700"
+        style={{
+          background: `radial-gradient(circle at 72% 36%, ${active.camera ? "rgba(255,196,100,0.14)" : "transparent"}, transparent 30%), radial-gradient(circle at 16% 66%, rgba(102,217,255,0.12), transparent 32%)`,
+        }}
       />
     </div>
   );
 }
 
-function AmbientGlow() {
-  return (
-    <div aria-hidden className="pointer-events-none fixed inset-0 z-0">
-      <div className="absolute -top-40 -left-40 size-[600px] rounded-full bg-[oklch(0.72_0.3_350/0.18)] blur-3xl animate-float-slow" />
-      <div className="absolute top-1/3 -right-40 size-[600px] rounded-full bg-[oklch(0.55_0.24_25/0.15)] blur-3xl" />
-      <div className="absolute bottom-0 left-1/3 size-[500px] rounded-full bg-[oklch(0.83_0.16_85/0.08)] blur-3xl" />
-    </div>
-  );
-}
-
-/* ─────────────────────────── nav ─────────────────────────── */
-
-const NAV_LINKS = [
-  { id: "squad", label: "ΟΜΑΔΑ" },
-  { id: "map", label: "ΧΑΡΤΗΣ" },
-  { id: "budget", label: "BUDGET" },
-  { id: "evidence", label: "ΑΡΧΕΙΟ" },
-];
-
-function Nav() {
-  const [scrolled, setScrolled] = useState(false);
-  const [open, setOpen] = useState(false);
-  const active = useActiveSection(NAV_LINKS.map((l) => l.id));
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 40);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-  return (
-    <header
-      className={cn(
-        "fixed inset-x-0 top-0 z-50 transition-colors duration-500",
-        scrolled ? "glass border-b border-border/40" : "bg-transparent",
-      )}
-    >
-      <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
-        <a href="#top" className="flex items-center gap-3">
-          <span className="size-2 rounded-full bg-[var(--neon)] shadow-neon animate-pulse-neon" />
-          <span className="font-mono text-xs tracking-[0.3em] text-muted-foreground">
-            ΑΠΟΣΤΟΛΗ // BCN—02.10.26
-          </span>
-        </a>
-        <nav className="hidden items-center gap-8 font-mono text-xs tracking-widest text-muted-foreground md:flex">
-          {NAV_LINKS.map((l) => (
-            <a
-              key={l.id}
-              href={`#${l.id}`}
-              className={cn(
-                "relative py-1 transition-colors hover:text-foreground",
-                active === l.id && "text-foreground",
-              )}
-            >
-              {l.label}
-              <span
-                className={cn(
-                  "absolute -bottom-0.5 left-0 h-px bg-[var(--neon)] transition-all duration-300",
-                  active === l.id ? "w-full" : "w-0",
-                )}
-              />
-            </a>
-          ))}
-        </nav>
-        <button
-          onClick={() => setOpen((v) => !v)}
-          className="flex size-9 flex-col items-center justify-center gap-1.5 md:hidden"
-          aria-label={open ? "Κλείσιμο μενού" : "Άνοιγμα μενού"}
-          aria-expanded={open}
-        >
-          <span
-            className={cn(
-              "h-px w-6 bg-foreground transition-transform",
-              open && "translate-y-[7px] rotate-45",
-            )}
-          />
-          <span className={cn("h-px w-6 bg-foreground transition-opacity", open && "opacity-0")} />
-          <span
-            className={cn(
-              "h-px w-6 bg-foreground transition-transform",
-              open && "-translate-y-[7px] -rotate-45",
-            )}
-          />
-        </button>
-      </div>
-      <div
-        className={cn(
-          "overflow-hidden border-t border-border/40 transition-[max-height] duration-500 md:hidden",
-          open ? "max-h-72 glass" : "max-h-0",
-        )}
-      >
-        <nav className="flex flex-col gap-1 px-6 py-4 font-mono text-sm tracking-widest text-muted-foreground">
-          {NAV_LINKS.map((l) => (
-            <a
-              key={l.id}
-              href={`#${l.id}`}
-              onClick={() => setOpen(false)}
-              className="rounded-lg px-2 py-3 transition-colors hover:bg-white/5 hover:text-foreground"
-            >
-              {l.label}
-            </a>
-          ))}
-        </nav>
-      </div>
-    </header>
-  );
-}
-
-/* ─────────────────────────── kinetic type ─────────────────────────── */
-
-function Lines({
-  lines,
-  base = 0,
-  step = 90,
-}: {
-  lines: { text: string; className?: string }[];
-  base?: number;
-  step?: number;
-}) {
-  return (
-    <>
-      {lines.map((ln, i) => (
-        <span key={i} className="line-mask">
-          <span
-            className={cn("line-inner", ln.className)}
-            style={{ "--rise-delay": `${base + i * step}ms` } as React.CSSProperties}
-          >
-            {ln.text}
-          </span>
-        </span>
-      ))}
-    </>
-  );
-}
-
-/* ─────────────────────────── hero ─────────────────────────── */
-
-function Hero() {
-  const { days, hours, minutes, seconds, mounted } = useCountdown(TRIP_DATE);
-  const [lit, setLit] = useState(false);
-  useEffect(() => {
-    const id = requestAnimationFrame(() => setLit(true));
-    return () => cancelAnimationFrame(id);
-  }, []);
-  return (
-    <section id="top" className="relative z-10 min-h-[100svh] w-full">
-      <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div data-speed="-0.12" className="parallax absolute inset-[-10%]">
-          <img
-            src={heroImg}
-            alt="Ορίζοντας Βαρκελώνης στο ηλιοβασίλεμα με σιλουέτα Σαγράδα Φαμίλια"
-            width={1920}
-            height={1280}
-            className="size-full object-cover opacity-55"
-          />
-        </div>
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,oklch(0.08_0.04_265/0.45)_0%,oklch(0.08_0.04_265/0.72)_55%,oklch(0.12_0.03_270)_100%)]" />
-      </div>
-
-      <div className="mx-auto flex min-h-[100svh] max-w-7xl flex-col justify-center px-6 pt-32 pb-20">
-        <div className={cn(lit && "line-rise-in")}>
-          <div className="mb-7 inline-flex items-center gap-3 glass rounded-full px-4 py-2">
-            <span className="size-1.5 rounded-full bg-[var(--blood)] animate-pulse" />
-            <span className="font-mono text-[10px] tracking-[0.3em] text-muted-foreground">
-              ΑΠΟΡΡΗΤΟ · 4 ΠΡΑΚΤΟΡΕΣ · 2 ΟΚΤΩΒΡΙΟΥ 2026
-            </span>
-          </div>
-
-          <h1 className="text-mega text-[clamp(3.2rem,12vw,11rem)]">
-            <Lines
-              lines={[
-                { text: "BARCELONA", className: "text-gradient-sunset" },
-                { text: "ΔΕΝ ΕΙΝΑΙ", className: "text-foreground/95" },
-                { text: "ΕΤΟΙΜΗ", className: "text-foreground/95" },
-              ]}
-              step={110}
-            />
-          </h1>
-
-          <p className="mt-8 max-w-2xl text-xl text-muted-foreground md:text-2xl">
-            <span className="line-mask">
-              <span
-                className="line-inner"
-                style={{ "--rise-delay": "440ms" } as React.CSSProperties}
-              >
-                4 παιδιά. Μία πόλη. Μηδέν φυσιολογικές νύχτες.
-              </span>
-            </span>
-          </p>
-
-          <HeroAgents />
-        </div>
-
-        <div
-          className="mt-12 grid max-w-3xl grid-cols-4 gap-2 sm:gap-4"
-          style={{ animation: lit ? undefined : "none" }}
-        >
-          {[
-            { label: "ΜΕΡΕΣ", value: days },
-            { label: "ΩΡΕΣ", value: hours },
-            { label: "ΛΕΠΤΑ", value: minutes },
-            { label: "ΔΕΥΤ.", value: seconds },
-          ].map((u, i) => (
-            <div
-              key={u.label}
-              className={cn(
-                "glass-strong shadow-elegant relative overflow-hidden rounded-xl p-3 text-center transition-all duration-700 sm:p-6",
-                lit ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
-              )}
-              style={{ transitionDelay: `${600 + i * 90}ms` }}
-            >
-              <div className="absolute inset-x-0 top-0 h-px animate-scan bg-gradient-to-r from-transparent via-[var(--neon)] to-transparent" />
-              <div className="text-mega text-4xl tabular-nums text-foreground sm:text-6xl md:text-7xl">
-                {mounted ? String(u.value).padStart(2, "0") : "--"}
-              </div>
-              <div className="mt-1 font-mono text-[10px] tracking-[0.3em] text-muted-foreground sm:text-xs">
-                {u.label}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        <div
-          className={cn(
-            "mt-12 flex flex-wrap items-center gap-4 transition-all duration-700",
-            lit ? "translate-y-0 opacity-100" : "translate-y-6 opacity-0",
-          )}
-          style={{ transitionDelay: "980ms" }}
-        >
-          <a
-            href="#squad"
-            className="group relative inline-flex items-center gap-3 rounded-full bg-[var(--neon)] px-8 py-4 font-mono text-sm tracking-[0.2em] text-primary-foreground shadow-neon transition-transform hover:scale-[1.02]"
-          >
-            ΜΠΕΣ ΣΤΗΝ ΑΠΟΣΤΟΛΗ
-            <span className="transition-transform group-hover:translate-x-1">→</span>
-          </a>
-          <div className="font-mono text-xs tracking-wider text-muted-foreground">
-            T-MINUS · ΑΝΑΧΩΡΗΣΗ ΚΛΕΙΔΩΜΕΝΗ
-          </div>
-        </div>
-      </div>
-
-      <a
-        href="#squad"
-        aria-label="Κύλιση προς τα κάτω"
-        className="absolute bottom-6 left-1/2 hidden -translate-x-1/2 flex-col items-center gap-2 font-mono text-[10px] tracking-[0.3em] text-muted-foreground md:flex"
-      >
-        SCROLL
-        <span className="relative h-10 w-px overflow-hidden bg-border">
-          <span className="absolute inset-x-0 top-0 h-4 animate-[scan_2s_linear_infinite] bg-[var(--neon)]" />
-        </span>
-      </a>
-    </section>
-  );
-}
-
-function HeroAgents() {
-  return (
-    <div className="mt-9 flex items-center gap-4">
-      <div className="flex -space-x-3">
-        {SQUAD.map((p) => (
-          <div
-            key={p.id}
-            className="size-11 overflow-hidden rounded-full ring-2 ring-background"
-            style={{ boxShadow: `0 0 0 1px ${p.accent}` }}
-            title={p.name}
-          >
-            <Portrait id={p.id} name={p.name} accent={p.accent} className="size-full" small />
-          </div>
-        ))}
-      </div>
-      <div className="font-mono text-[10px] leading-tight tracking-[0.2em] text-muted-foreground">
-        EVAG · ΣΤΑΥΡΟΣ
-        <br />
-        ΣΤΕΦΑΝΟΣ · ΓΙΩΡΓΟΣ
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────── marquee ─────────────────────────── */
-
-function Marquee() {
-  const words = [
-    "ΑΠΟΣΤΟΛΗ ΕΝΕΡΓΗ",
-    "BOYS TRIP LOADING",
-    "MALAKOFATSA MODE",
-    "WORTH IT",
-    "ROOFTOP CONFIRMED",
-    "BARCELONETA INCOMING",
-    "ΜΗΔΕΝ ΦΥΣΙΟΛΟΓΙΚΕΣ ΝΥΧΤΕΣ",
-    "IOS DANCE VOL.2",
-    "ΥΔΡΟ-ΠΟΛΕΜΟΣ",
-  ];
-  const items = [...words, ...words];
-  return (
-    <div className="relative z-10 space-y-2 overflow-hidden border-y border-border/40 bg-[oklch(0.08_0.04_265/0.6)] py-6">
-      <div className="marquee-row flex w-max animate-marquee gap-12 text-mega text-3xl md:text-5xl">
-        {items.map((w, i) => (
-          <span key={i} className="flex items-center gap-12 whitespace-nowrap text-foreground/25">
-            {w}
-            <span className="text-[var(--neon)]">✦</span>
-          </span>
-        ))}
-      </div>
-      <div className="marquee-row flex w-max animate-marquee-rev gap-12 text-mega text-3xl text-foreground/10 md:text-5xl">
-        {items.map((w, i) => (
-          <span key={i} className="flex items-center gap-12 whitespace-nowrap">
-            {w}
-            <span className="text-[var(--gold)]">✦</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/* ─────────────────────────── squad ─────────────────────────── */
-
-type Player = {
-  id: string;
-  name: string;
-  role: string;
-  tone: string;
-  lines: string[];
-  abilities: string[];
-  stats: { label: string; value: number }[];
-  accent: string;
-};
-
-const SQUAD: Player[] = [
-  {
-    id: "evag",
-    name: "EVAG",
-    role: "MISSION CONTROL",
-    tone: "Εγκέφαλος · Αρχιτέκτονας του Hype · Διαχειριστής Χάους",
-    accent: "var(--gold)",
-    lines: [
-      "Αυτός που χτίζει το hype πριν καν η πόλη καταλάβει τι έρχεται.",
-      "Mission control, διαχειριστής της ενέργειας του ταξιδιού και επίσημος ιστορικός του χάους.",
-      "Μετατρέπει ένα κανονικό ταξίδι στη Βαρκελώνη σε legendary ιδιωτικό documentary.",
-    ],
-    abilities: ["Hype Engineering", "Damage Control", "Nightlife Strategy", "Memory Archiving"],
-    stats: [
-      { label: "Όραμα", value: 100 },
-      { label: "Οργάνωση", value: 86 },
-      { label: "Ανοχή στο Χάος", value: 92 },
-      { label: "Main Character Energy", value: 99 },
-    ],
-  },
-  {
-    id: "stavros",
-    name: "STAVROS",
-    role: "CHAOTIC LEGEND",
-    tone: "Διπλωματικός ειδικός σε σπαστά Ισπανικά",
-    accent: "var(--neon)",
-    lines: [
-      "Θα πει ασυναρτησίες σε κάθε Ισπανίδα σαν να πρόκειται για διπλωματική αποστολή.",
-      "Όταν εκνευρίζεται, ενεργοποιεί τον υδρο-πόλεμο: πετάει εξάδες με νερά στην παρέα.",
-      "Αναμένεται να αποκαλύψει τη δεύτερη legendary χορευτική κίνηση που ετοιμάζει κρυφά από την Ίο εδώ και 2 χρόνια.",
-      "Πρόβλεψη: θα φιλήσει 8 κοπέλες και θα είναι πολύ κουρασμένος για να συνεχίσει οτιδήποτε άλλο.",
-      "Δηλωμένο budget: €800. Πραγματικό αποτέλεσμα: €2.000. Τελική δήλωση: «Worth it.»",
-    ],
-    abilities: [
-      "Hydration Rage",
-      "Ios Dance Move Vol. 2",
-      "Financial Delusion",
-      "8/8 Φιλιά · 0/8 Follow-through",
-    ],
-    stats: [
-      { label: "Χάος", value: 99 },
-      { label: "Έλεγχος Budget", value: 12 },
-      { label: "Dance Mystery", value: 100 },
-      { label: "Ακρίβεια Ισπανικών", value: 3 },
-    ],
-  },
-  {
-    id: "stefanos",
-    name: "STEFANOS",
-    role: "BEACH-DANCE MENACE",
-    tone: "Καλλιτεχνικός · Έτοιμος για tango · Βιολογικός κίνδυνος",
-    accent: "var(--azure)",
-    lines: [
-      "Θα χορεύει ασταμάτητα ισπανικά τραγούδια, ακόμα και μέσα στο μπάνιο.",
-      "Θα πάθει σχεδόν εγκεφαλικό όταν δει την Barceloneta.",
-      "Θα ξεκλειδώσει ξαφνικά επαγγελματικού επιπέδου tango και παραδοσιακούς ισπανικούς χορούς.",
-      "Θα φωτογραφίζει και το πιο ασήμαντο αντικείμενο κάθε 6 δευτερόλεπτα.",
-      "Θα καταστρέψει τα δωμάτια του διαμερίσματος με καταστροφικές πορδές.",
-    ],
-    abilities: [
-      "Bathroom Flamenco",
-      "Barceloneta Overload",
-      "Sudden Tango Mastery",
-      "6-Second Photography Reflex",
-      "Apartment Gas Attack",
-    ],
-    stats: [
-      { label: "Χορευτική Ενέργεια", value: 98 },
-      { label: "Συχνότητα Φωτό", value: 100 },
-      { label: "Σταθερότητα στην Παραλία", value: 8 },
-      { label: "Ασφάλεια Δωματίου", value: 0 },
-    ],
-  },
-  {
-    id: "giorgos",
-    name: "GIORGOS",
-    role: "ΠΙΣΤΟΣ ΦΙΛΟΣΟΦΟΣ",
-    tone: "Πιστός γκόμενος · Stand-up comedian της νύχτας",
-    accent: "var(--blood)",
-    lines: [
-      "Παρά τη σχέση 4 ετών, γίνεται stand-up comedian κάθε φορά που ξεκινάει νύχτα.",
-      "Κάθε αλληλεπίδραση με κοπέλα ενεργοποιεί τη legendary malakofatsa έκφραση.",
-      "Θα επιχειρήσει 20 pulls, όχι για να τα ολοκληρώσει, αλλά for the love of the game.",
-      "Κάθε 2 λεπτά τσεκάρει το κινητό και ψιθυρίζει cringe γλυκόλογα στην κοπέλα του.",
-    ],
-    abilities: [
-      "Malakofatsa Mode",
-      "Stand-up Flirt Comedy",
-      "Loyal but Present",
-      "Love-of-the-Game Pulls",
-    ],
-    stats: [
-      { label: "Πίστη", value: 100 },
-      { label: "Cringe Τηλέφωνα", value: 95 },
-      { label: "Συμμετοχή στο Παιχνίδι", value: 87 },
-      { label: "Ποσοστό Ολοκλήρωσης", value: 4 },
-    ],
-  },
-];
+/* ─────────────────────────── portrait ─────────────────────────── */
 
 function Portrait({
   id,
   name,
   accent,
   className,
-  small = false,
 }: {
   id: string;
   name: string;
   accent: string;
   className?: string;
-  small?: boolean;
 }) {
   const [err, setErr] = useState(false);
-  const initials = name.slice(0, 2);
   if (err) {
     return (
       <div
-        className={cn("flex items-center justify-center", className)}
+        className={className}
         style={{
-          background: `radial-gradient(circle at 50% 30%, color-mix(in oklab, ${accent} 60%, transparent), transparent 70%), linear-gradient(160deg, oklch(0.22 0.05 270), oklch(0.1 0.03 265))`,
+          background: `radial-gradient(circle at 50% 28%, color-mix(in oklab, ${accent} 55%, transparent), transparent 70%), linear-gradient(165deg, #1a1430, #0a0818)`,
         }}
-        aria-label={name}
       >
-        <span
-          className={cn("text-mega opacity-90", small ? "text-base" : "text-[18vw] md:text-[8vw]")}
-          style={{ color: accent }}
-        >
-          {initials}
-        </span>
+        <div className="flex h-full w-full items-center justify-center">
+          <span
+            className="font-black"
+            style={{ color: accent, fontSize: "clamp(3rem,7vw,6rem)", letterSpacing: "-0.04em" }}
+          >
+            {name.slice(0, 2)}
+          </span>
+        </div>
       </div>
     );
   }
   return (
     <img
+      alt={`Agent ${name}`}
       src={`/squad/${id}.jpg`}
-      alt={`Πορτρέτο πράκτορα: ${name}`}
       onError={() => setErr(true)}
-      loading={small ? "eager" : "lazy"}
-      className={cn("object-cover", className)}
+      loading="lazy"
+      className={className}
+      style={{ objectFit: "cover" }}
     />
   );
 }
 
-function Squad() {
-  return (
-    <section id="squad" className="relative z-10 mx-auto max-w-7xl px-6 py-28 md:py-36">
-      <SectionHeader
-        kicker="ΦΑΚΕΛΟΣ · 04 ΠΡΑΚΤΟΡΕΣ"
-        title="Η ΟΜΑΔΑ"
-        subtitle="Διάβασέ τα προσεκτικά. Τα προφίλ είναι νομικά δεσμευτικά για όλη τη διάρκεια του ταξιδιού."
-      />
-      <div className="mt-16 space-y-24 md:space-y-32 md:mt-24">
-        {SQUAD.map((p, i) => (
-          <AgentRow key={p.id} player={p} index={i} />
-        ))}
-      </div>
-    </section>
-  );
-}
+/* ─────────────────────────── stages ─────────────────────────── */
 
-function AgentRow({ player, index }: { player: Player; index: number }) {
-  const even = index % 2 === 0;
-  const [ref, seen] = useInView<HTMLDivElement>(0.3);
+function HeroStage({ reduced }: { reduced: boolean }) {
+  const c = useCountdown(TRIP_DATE);
+  const tiles = [
+    { label: "days", value: c.days },
+    { label: "hrs", value: c.hours },
+    { label: "min", value: c.minutes },
+    { label: "sec", value: c.seconds },
+  ];
   return (
-    <div ref={ref} className="reveal-on-scroll grid items-center gap-8 md:grid-cols-12 md:gap-12">
-      {/* Photo */}
-      <div className={cn("md:col-span-5", even ? "md:order-1" : "md:order-2")}>
-        <div className="group relative aspect-[3/4] overflow-hidden rounded-3xl shadow-elegant">
-          <div data-speed="0.05" className="parallax absolute inset-[-10%]">
-            <Portrait
-              id={player.id}
-              name={player.name}
-              accent={player.accent}
-              className="size-full duotone scale-105 transition-all duration-700 group-hover:scale-110 group-hover:[filter:grayscale(0)_contrast(1.02)]"
-            />
-          </div>
-          <div
-            className="absolute inset-0 mix-blend-color opacity-60 transition-opacity duration-700 group-hover:opacity-0"
-            style={{ background: `linear-gradient(150deg, ${player.accent}, transparent 75%)` }}
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.08_0.04_265)] via-transparent to-transparent" />
-          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between p-6">
+    <section className="pointer-events-none fixed inset-0 z-30 flex flex-col justify-center px-5 sm:px-8 md:px-12 lg:px-16">
+      <div
+        className={reduced ? "" : "animate-[v1-in_640ms_cubic-bezier(.16,1,.3,1)_both]"}
+        style={{ maxWidth: "min(94vw, 880px)" }}
+      >
+        <div className="mb-5 flex items-center gap-3 font-mono text-[0.66rem] uppercase tracking-[0.36em] text-white/55">
+          <Plane size={14} className="text-[#66d9ff]" />
+          Stop 00 / Mission Control
+        </div>
+        <h1 className="font-black uppercase leading-[0.82] tracking-[-0.045em] text-[#fff7e6] text-[clamp(3.4rem,11vw,11rem)]">
+          <span className="block">Η Βαρκελώνη</span>
+          <span className="block text-[#ff5f8e]">δεν είναι</span>
+          <span className="block">έτοιμη</span>
+        </h1>
+        <p className="mt-6 max-w-[34rem] text-lg leading-8 text-white/72 md:text-xl">
+          4 παιδιά. Μία πόλη. Μηδέν φυσιολογικές νύχτες. Το briefing ανοίγει από τη θάλασσα και
+          αρχίζει να μετράει αντίστροφα.
+        </p>
+        <div className="mt-9 flex flex-wrap gap-2.5">
+          {tiles.map((t) => (
             <div
-              className="text-mega text-7xl leading-none md:text-8xl"
-              style={{ color: player.accent }}
+              key={t.label}
+              className="min-w-[4.6rem] border border-white/14 bg-white/[0.04] px-4 py-3 backdrop-blur-md"
             >
-              0{index + 1}
-            </div>
-            <div className="text-right font-mono text-[10px] tracking-[0.3em] text-foreground/70">
-              <div>ΚΑΤΑΣΤΑΣΗ</div>
-              <div className="mt-1 flex items-center justify-end gap-1.5 text-foreground">
-                <span
-                  className="size-1.5 animate-pulse rounded-full"
-                  style={{ background: player.accent }}
-                />
-                ΕΤΟΙΜΟΣ
+              <div className="font-black tabular-nums leading-none tracking-[-0.04em] text-[#fff7e6] text-[clamp(1.9rem,3.4vw,3rem)]">
+                {String(t.value).padStart(2, "0")}
               </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Dossier */}
-      <div className={cn("md:col-span-7", even ? "md:order-2" : "md:order-1")}>
-        <div className="font-mono text-[10px] tracking-[0.3em] text-muted-foreground">
-          ΠΡΑΚΤΟΡΑΣ · 0{index + 1}
-        </div>
-        <h3 className="text-mega mt-2 text-6xl leading-none md:text-7xl lg:text-8xl">
-          {player.name}
-        </h3>
-        <div className="mt-3 font-mono text-xs tracking-[0.2em]" style={{ color: player.accent }}>
-          {player.role}
-        </div>
-        <p className="mt-4 text-sm italic text-muted-foreground">{player.tone}</p>
-
-        <div className="mt-6 space-y-2.5">
-          {player.lines.map((l, i) => (
-            <div key={i} className="flex gap-3 text-sm leading-relaxed md:text-base">
-              <span
-                className="mt-2 size-1 shrink-0 rounded-full"
-                style={{ background: player.accent }}
-              />
-              <span className="text-foreground/85">{l}</span>
-            </div>
-          ))}
-        </div>
-
-        <div className="mt-7">
-          <div className="mb-3 font-mono text-[10px] tracking-[0.3em] text-muted-foreground">
-            ΕΙΔΙΚΕΣ ΙΚΑΝΟΤΗΤΕΣ
-          </div>
-          <div className="flex flex-wrap gap-2">
-            {player.abilities.map((a) => (
-              <span
-                key={a}
-                className="rounded-full border px-3 py-1 font-mono text-[11px] tracking-wide transition-colors"
-                style={{
-                  borderColor: `color-mix(in oklab, ${player.accent} 40%, transparent)`,
-                  color: player.accent,
-                }}
-              >
-                {a}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        <div className="mt-7 grid grid-cols-2 gap-x-8 gap-y-4">
-          {player.stats.map((s, si) => (
-            <div key={s.label}>
-              <div className="flex justify-between font-mono text-[11px] tracking-wider text-muted-foreground">
-                <span>{s.label}</span>
-                <span className="text-foreground">{s.value}</span>
-              </div>
-              <div className="mt-1.5 h-1.5 overflow-hidden rounded-full bg-[oklch(1_0_0/0.06)]">
-                <div
-                  className="h-full rounded-full transition-[width] duration-1000 ease-out"
-                  style={{
-                    width: seen ? `${s.value}%` : "0%",
-                    transitionDelay: `${si * 120}ms`,
-                    background: `linear-gradient(90deg, ${player.accent}, color-mix(in oklab, ${player.accent} 40%, white))`,
-                    boxShadow: `0 0 12px ${player.accent}`,
-                  }}
-                />
+              <div className="mt-1 font-mono text-[0.55rem] uppercase tracking-[0.28em] text-white/42">
+                {t.label}
               </div>
             </div>
           ))}
         </div>
       </div>
-    </div>
+    </section>
   );
 }
 
-function SectionHeader({
-  kicker,
-  title,
-  subtitle,
-}: {
-  kicker: string;
-  title: string;
-  subtitle?: string;
-}) {
+function CrewStage({ reduced }: { reduced: boolean }) {
   return (
-    <div className="reveal-on-scroll max-w-3xl">
-      <div className="font-mono text-[11px] tracking-[0.35em] text-[var(--neon)]">{kicker}</div>
-      <h2 className="text-mega mt-4 text-5xl text-gradient-sunset md:text-7xl">
-        <Lines lines={[{ text: title }]} />
-      </h2>
-      {subtitle && <p className="mt-5 max-w-2xl text-lg text-muted-foreground">{subtitle}</p>}
-    </div>
-  );
-}
-
-/* ─────────────────────────── mission map ─────────────────────────── */
-
-const MISSIONS = [
-  {
-    name: "Barceloneta Beach",
-    obj: "Επιβίωσε από τη συναισθηματική κατάρρευση του Στέφανου.",
-    risk: 4,
-    img: beachImg,
-  },
-  {
-    name: "Gothic Quarter",
-    obj: "Χάσου επίτηδες. Φωτογράφισε κάθε πόρτα.",
-    risk: 2,
-    img: gothicImg,
-  },
-  {
-    name: "Rooftop Bars",
-    obj: "Παρίστανε ότι αυτό είναι luxury lifestyle documentary.",
-    risk: 3,
-    img: rooftopImg,
-  },
-  {
-    name: "Nightclubs",
-    obj: "Γίνε μάρτυρας του Stavros Dance Move Vol. 2.",
-    risk: 5,
-    img: clubImg,
-  },
-  {
-    name: "Tapas & Νυχτερινό Φαγητό",
-    obj: "Παράγγειλε άλλο ένα πιάτο. Μετά άλλο ένα.",
-    risk: 2,
-    img: tapasImg,
-  },
-  {
-    name: "Τυχαία Side Quests",
-    obj: "Στόχος διαμερίσματος: απόφυγε τον βιολογικό πόλεμο του Στέφανου.",
-    risk: 5,
-    img: sidequestImg,
-  },
-];
-
-function MissionMap() {
-  return (
-    <section id="map" className="relative z-10 mx-auto max-w-7xl px-6 py-28 md:py-36">
-      <SectionHeader
-        kicker="ΕΠΙΧΕΙΡΗΣΕΙΣ · ΖΩΝΕΣ ΣΤΟΧΟΥ"
-        title="ΧΑΡΤΗΣ ΑΠΟΣΤΟΛΗΣ"
-        subtitle="Έξι επιβεβαιωμένες τοποθεσίες. Κάθε μία με τον δικό της στόχο και βαθμό κινδύνου."
-      />
-      <div className="mt-16 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {MISSIONS.map((m, i) => (
-          <article
-            key={m.name}
-            className="reveal-on-scroll group relative h-80 overflow-hidden rounded-2xl shadow-elegant"
-            style={{ transitionDelay: `${i * 60}ms` }}
-          >
-            <div data-speed="0.04" className="parallax absolute inset-[-8%]">
-              <img
-                src={m.img}
-                alt={m.name}
-                loading="lazy"
-                width={1280}
-                height={1280}
-                className="size-full object-cover transition-transform duration-700 group-hover:scale-110"
-              />
-            </div>
-            <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.08_0.04_265)] via-[oklch(0.08_0.04_265/0.5)] to-transparent" />
-            <div className="absolute inset-0 flex flex-col justify-between p-6">
-              <div className="flex items-start justify-between">
-                <div className="font-mono text-[10px] tracking-[0.3em] text-foreground/70">
-                  ΖΩΝΗ · 0{i + 1}
-                </div>
-                <RiskBadge level={m.risk} />
-              </div>
-              <div>
-                <h3 className="text-mega text-3xl text-foreground">{m.name}</h3>
-                <p className="mt-2 text-sm text-foreground/80">{m.obj}</p>
-              </div>
-            </div>
-          </article>
+    <section className="pointer-events-none fixed inset-0 z-30 flex flex-col justify-center px-4 pt-24 sm:px-8 md:px-12 lg:px-16">
+      <div className="mb-6 flex items-end justify-between">
+        <div>
+          <div className="flex items-center gap-3 font-mono text-[0.66rem] uppercase tracking-[0.36em] text-white/55">
+            <Users size={14} className="text-[#ffd16f]" />
+            Stop 01 / The Squad
+          </div>
+          <h2 className="mt-3 font-black uppercase leading-[0.85] tracking-[-0.04em] text-[#fff7e6] text-[clamp(2.4rem,6vw,5rem)]">
+            Τέσσερις πράκτορες
+          </h2>
+        </div>
+        <div className="hidden font-mono text-[0.6rem] uppercase tracking-[0.24em] text-white/40 md:block">
+          hover για dossier
+        </div>
+      </div>
+      <div className="pointer-events-auto grid grid-cols-2 gap-3 md:grid-cols-4 md:gap-4">
+        {CREW.map((agent, i) => (
+          <CrewCard key={agent.id} agent={agent} index={i} reduced={reduced} />
         ))}
       </div>
     </section>
   );
 }
 
-function RiskBadge({ level }: { level: number }) {
-  const labels = ["", "ΗΠΙΟΣ", "ΑΥΞΗΜΕΝΟΣ", "ΥΨΗΛΟΣ", "ΣΟΒΑΡΟΣ", "ΚΡΙΣΙΜΟΣ"];
-  const color = level >= 4 ? "var(--blood)" : level >= 3 ? "var(--neon)" : "var(--gold)";
+function CrewCard({
+  agent,
+  index,
+  reduced,
+}: {
+  agent: (typeof CREW)[number];
+  index: number;
+  reduced: boolean;
+}) {
+  const [tilt, setTilt] = useState({ rx: 0, ry: 0, on: false });
+  const onMove = (e: ReactPointerEvent<HTMLElement>) => {
+    if (reduced) return;
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width - 0.5;
+    const y = (e.clientY - r.top) / r.height - 0.5;
+    setTilt({ rx: -y * 9, ry: x * 11, on: true });
+  };
+  const onLeave = () => setTilt({ rx: 0, ry: 0, on: false });
   return (
-    <div
-      className="flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[10px] tracking-[0.2em] backdrop-blur-md"
-      style={{ borderColor: color, color, background: "oklch(0 0 0 / 0.4)" }}
+    <article
+      onPointerMove={onMove}
+      onPointerLeave={onLeave}
+      className={
+        "group relative aspect-[3/4.4] overflow-hidden border border-white/12 bg-[#0a0818] " +
+        (reduced ? "" : "animate-[v1-card_640ms_cubic-bezier(.16,1,.3,1)_both]")
+      }
+      style={
+        {
+          "--accent": agent.accent,
+          animationDelay: `${index * 90}ms`,
+          transform: `perspective(1000px) rotateX(${tilt.rx}deg) rotateY(${tilt.ry}deg)`,
+          transition: "transform 220ms cubic-bezier(.16,1,.3,1), box-shadow 300ms",
+          boxShadow: tilt.on
+            ? `0 30px 80px -30px ${agent.accent}99, 0 0 0 1px ${agent.accent}55 inset`
+            : "0 20px 60px -40px rgba(0,0,0,.8)",
+        } as CSSProperties
+      }
     >
-      <span className="flex gap-0.5" aria-hidden>
+      <Portrait
+        id={agent.id}
+        name={agent.name}
+        accent={agent.accent}
+        className="absolute inset-0 h-full w-full grayscale-[0.65] transition-all duration-500 group-hover:scale-[1.05] group-hover:grayscale-0"
+      />
+      {/* accent wash + darken for legibility */}
+      <div
+        className="absolute inset-0 mix-blend-soft-light opacity-60 transition-opacity duration-500 group-hover:opacity-30"
+        style={{ background: `linear-gradient(180deg, transparent 30%, ${agent.accent})` }}
+      />
+      <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(5,5,16,0.1)_28%,rgba(5,5,16,0.86))]" />
+
+      {/* specimen number */}
+      <div className="absolute right-3 top-3 font-mono text-[0.6rem] uppercase tracking-[0.2em] text-white/55">
+        0{index + 1}
+      </div>
+
+      {/* signature stat — big */}
+      <div className="absolute left-3 top-3">
+        <div
+          className="font-black leading-none tracking-[-0.04em]"
+          style={{ color: agent.accent, fontSize: "clamp(1.5rem,2.6vw,2.4rem)" }}
+        >
+          {agent.stat}
+        </div>
+        <div className="font-mono text-[0.5rem] uppercase tracking-[0.22em] text-white/55">
+          {agent.statLabel}
+        </div>
+      </div>
+
+      {/* identity */}
+      <div className="absolute inset-x-0 bottom-0 p-4">
+        <div className="font-black uppercase leading-none tracking-[-0.03em] text-[#fff7e6] text-[clamp(1.3rem,2.4vw,2rem)]">
+          {agent.name}
+        </div>
+        <div
+          className="mt-1 font-mono text-[0.58rem] uppercase tracking-[0.2em]"
+          style={{ color: agent.accent }}
+        >
+          {agent.role}
+        </div>
+        {/* signature move — revealed on hover */}
+        <div className="grid grid-rows-[0fr] transition-[grid-template-rows] duration-500 group-hover:grid-rows-[1fr]">
+          <div className="overflow-hidden">
+            <p className="mt-2 border-t border-white/14 pt-2 text-[0.78rem] leading-5 text-white/82">
+              <span className="font-mono text-[0.5rem] uppercase tracking-[0.2em] text-white/45">
+                signature move
+              </span>
+              <br />
+              {agent.move}
+            </p>
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function MapStage({ reduced }: { reduced: boolean }) {
+  return (
+    <section className="pointer-events-none fixed inset-0 z-30 flex flex-col justify-center px-4 pt-24 sm:px-8 md:px-12 lg:px-16">
+      <div className="mb-6">
+        <div className="flex items-center gap-3 font-mono text-[0.66rem] uppercase tracking-[0.36em] text-white/55">
+          <Landmark size={14} className="text-[#ffb05a]" />
+          Stop 02 / Target Zones
+        </div>
+        <h2 className="mt-3 font-black uppercase leading-[0.85] tracking-[-0.04em] text-[#fff7e6] text-[clamp(2.4rem,6vw,5rem)]">
+          Οι ζώνες οπλίζονται
+        </h2>
+      </div>
+      <div className="grid max-w-[68rem] gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {ZONES.map((z, i) => (
+          <div
+            key={z.name}
+            className={
+              "border border-white/12 bg-[#0a0818]/70 p-4 backdrop-blur-md " +
+              (reduced ? "" : "animate-[v1-card_560ms_cubic-bezier(.16,1,.3,1)_both]")
+            }
+            style={{ animationDelay: `${i * 70}ms` }}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-mono text-[0.55rem] uppercase tracking-[0.2em] text-white/38">
+                  zone {String(i + 1).padStart(2, "0")}
+                </div>
+                <div className="mt-1 font-black uppercase tracking-[-0.02em] text-[#fff7e6]">
+                  {z.name}
+                </div>
+              </div>
+              <RiskMeter value={z.risk} />
+            </div>
+            <p className="mt-2 text-sm leading-5 text-white/60">{z.objective}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function RiskMeter({ value }: { value: number }) {
+  const color =
+    value >= 5 ? "#ff5f8e" : value >= 4 ? "#ff8a4a" : value >= 3 ? "#ffd16f" : "#66d9ff";
+  return (
+    <div className="flex shrink-0 flex-col items-end">
+      <div className="font-mono text-[0.5rem] uppercase tracking-[0.18em] text-white/34">risk</div>
+      <div className="mt-1 flex gap-1">
         {Array.from({ length: 5 }).map((_, i) => (
           <span
             key={i}
-            className="h-2.5 w-0.5 rounded-full"
-            style={{ background: i < level ? color : "oklch(1 0 0 / 0.15)" }}
+            className="h-6 w-1"
+            style={{
+              background: i < value ? color : "rgba(255,255,255,.12)",
+              boxShadow: i < value ? `0 0 12px ${color}` : "none",
+            }}
           />
         ))}
-      </span>
-      {labels[level]}
+      </div>
     </div>
   );
 }
 
-/* ─────────────────────────── prophecy ─────────────────────────── */
+function NightStage({ active, reduced }: { active: boolean; reduced: boolean }) {
+  const [prophecy, setProphecy] = useState(0);
+  const [step, setStep] = useState(-1);
+  const [running, setRunning] = useState(false);
 
-const PROPHECIES = [
-  "Ο Σταύρος θα πει κάτι παράνομο σε σπαστά Ισπανικά.",
-  "Ο Γιώργος θα ανοίξει WhatsApp στη μέση της κουβέντας.",
-  "Ο Στέφανος θα φωτογραφίσει μια τυχαία καρέκλα σαν να είναι το Λούβρο.",
-  "Ο Evag θα πει «αυτό είναι content» τουλάχιστον 14 φορές.",
-  "Κάποιος θα ξοδέψει €70 και θα το πει «μικρή νύχτα».",
-  "Η παρέα θα χρειαστεί νερό, φαγητό και συναισθηματική ανασυγκρότηση μέχρι τις 5 π.μ.",
-  "Ο Σταύρος θα επιχειρήσει αγκαλιά που θα καταλήξει σε λαβή πάλης.",
-  "Ο Γιώργος θα γελάσει, και αμέσως μετά θα κάνει FaceTime σπίτι.",
-  "Ο Στέφανος θα χορέψει με σερβιτόρο χωρίς λόγο.",
-  "Ο Evag θα ανακηρύξει τη νύχτα «ιστορική» πριν τα μεσάνυχτα.",
-  "Κάποιος θα πει «ένα ποτό». Οκτώ ποτά μετά, η άρνηση συνεχίζεται.",
-  "Tango θα ξεκλειδωθεί στο πιο ακατάλληλο μέρος.",
-];
+  const totals = BUDGET.reduce(
+    (a, b) => ({ expected: a.expected + b.expected, actual: a.actual + b.actual }),
+    { expected: 0, actual: 0 },
+  );
+  const animActual = useCountUp(totals.actual, active, reduced);
+  const overrun = Math.round(((totals.actual - totals.expected) / totals.expected) * 100);
+  const chaos = step < 0 ? 0 : Math.round(((step + 1) / NIGHT.length) * 100);
 
-function Prophecy() {
-  const [text, setText] = useState("Πάτα το κουμπί. Παρέλαβε τη μοίρα σου.");
-  const [rolling, setRolling] = useState(false);
-  const [revealed, setRevealed] = useState(false);
-  const rollRef = useRef<number | null>(null);
-  const lastRef = useRef<number>(-1);
-
-  const pick = () => {
-    let idx = Math.floor(Math.random() * PROPHECIES.length);
-    if (PROPHECIES.length > 1) {
-      while (idx === lastRef.current) idx = Math.floor(Math.random() * PROPHECIES.length);
-    }
-    lastRef.current = idx;
-    return PROPHECIES[idx];
-  };
-
-  const generate = () => {
-    if (rolling) return;
-    setRolling(true);
-    setRevealed(false);
-    if (prefersReducedMotion()) {
-      setText(pick());
-      setRolling(false);
-      setRevealed(true);
+  useEffect(() => {
+    if (!running) return;
+    if (step >= NIGHT.length - 1) {
+      setRunning(false);
       return;
     }
-    let count = 0;
-    const tick = () => {
-      setText(PROPHECIES[Math.floor(Math.random() * PROPHECIES.length)]);
-      count++;
-      if (count < 12) {
-        rollRef.current = window.setTimeout(tick, 60 + count * 8);
-      } else {
-        setText(pick());
-        setRolling(false);
-        setRevealed(true);
-      }
-    };
-    tick();
-  };
+    const id = window.setTimeout(
+      () => setStep((s) => Math.min(s + 1, NIGHT.length - 1)),
+      reduced ? 150 : 720,
+    );
+    return () => window.clearTimeout(id);
+  }, [step, running, reduced]);
 
-  const share = async () => {
-    const payload = `🔮 Προφητεία Βαρκελώνης: «${text}»`;
-    try {
-      if (navigator.share) {
-        await navigator.share({ text: payload });
-      } else {
-        await navigator.clipboard.writeText(payload);
-        toast.success("Αντιγράφηκε στο πρόχειρο", { description: "Ρίξ' το στο group chat." });
-      }
-    } catch {
-      /* user cancelled — ignore */
-    }
+  const spin = () =>
+    setProphecy(
+      (v) => (v + 1 + Math.floor(Math.random() * (PROPHECIES.length - 1))) % PROPHECIES.length,
+    );
+  const run = () => {
+    setStep(0);
+    setRunning(true);
   };
-
-  useEffect(
-    () => () => {
-      if (rollRef.current) clearTimeout(rollRef.current);
-    },
-    [],
-  );
 
   return (
-    <section className="relative z-10 mx-auto max-w-7xl px-6 py-28 md:py-36">
-      <SectionHeader
-        kicker="ΜΑΝΤΕΙΟ · ΚΡΥΠΤΟΓΡΑΦΗΜΕΝΗ ΠΡΟΒΛΕΨΗ"
-        title="PROPHECY GENERATOR"
-        subtitle="Το μέλλον είναι ήδη γραμμένο. Απλά δεν ξέρουμε ποια σειρά."
-      />
-      <div className="reveal-on-scroll relative mt-14 overflow-hidden rounded-3xl glass-strong shadow-elegant p-10 text-center md:p-16">
-        <div className="absolute inset-x-0 top-0 h-px animate-scan bg-gradient-to-r from-transparent via-[var(--neon)] to-transparent" />
-        <div className="font-mono text-[10px] tracking-[0.3em] text-muted-foreground">
-          ΕΙΣΕΡΧΟΜΕΝΗ ΜΕΤΑΔΟΣΗ
+    <section className="pointer-events-none fixed inset-0 z-30 flex flex-col justify-center px-4 pt-24 sm:px-8 md:px-12 lg:px-16">
+      <div className="mb-6">
+        <div className="flex items-center gap-3 font-mono text-[0.66rem] uppercase tracking-[0.36em] text-white/55">
+          <Martini size={14} className="text-[#ff5f8e]" />
+          Stop 03 / Night Systems
         </div>
-        <p
-          className={cn(
-            "text-mega mt-6 min-h-[5rem] text-3xl leading-[1.05] text-foreground transition-opacity md:text-5xl",
-            rolling && "animate-flicker",
-          )}
-        >
-          «{text}»
-        </p>
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
-          <button
-            onClick={generate}
-            className="inline-flex items-center gap-3 rounded-full border border-[var(--neon)] px-8 py-4 font-mono text-sm tracking-[0.2em] text-[var(--neon)] transition-all hover:bg-[var(--neon)] hover:text-primary-foreground hover:shadow-neon"
-          >
-            {rolling ? "ΑΠΟΚΩΔΙΚΟΠΟΙΗΣΗ..." : "ΓΕΝΝΗΣΕ ΠΡΟΦΗΤΕΙΑ"}
-          </button>
-          {revealed && !rolling && (
+        <h2 className="mt-3 font-black uppercase leading-[0.85] tracking-[-0.04em] text-[#fff7e6] text-[clamp(2.4rem,6vw,5rem)]">
+          Chaos simulator
+        </h2>
+      </div>
+
+      <div className="pointer-events-auto grid max-w-[72rem] gap-3 lg:grid-cols-3">
+        {/* prophecy */}
+        <div className="border border-white/12 bg-[#0a0818]/70 p-5 backdrop-blur-md">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2 font-mono text-[0.56rem] uppercase tracking-[0.22em] text-white/45">
+              <Dice5 size={14} className="text-[#ff5f8e]" /> prophecy
+            </span>
             <button
-              onClick={share}
-              className="inline-flex items-center gap-2 rounded-full border border-border px-6 py-4 font-mono text-xs tracking-[0.2em] text-muted-foreground transition-colors hover:text-foreground"
+              type="button"
+              onClick={spin}
+              className="border border-[#ff5f8e] px-3 py-1.5 font-mono text-[0.55rem] uppercase tracking-[0.18em] text-[#ff5f8e] transition hover:bg-[#ff5f8e] hover:text-[#050510]"
             >
-              ΚΟΙΝΟΠΟΙΗΣΗ ↗
+              spin
             </button>
-          )}
+          </div>
+          <p className="text-balance text-lg font-semibold leading-7 text-[#fff7e6]">
+            “{PROPHECIES[prophecy]}”
+          </p>
+        </div>
+
+        {/* budget */}
+        <div className="border border-white/12 bg-[#0a0818]/70 p-5 backdrop-blur-md">
+          <div className="mb-3 flex items-center gap-2 font-mono text-[0.56rem] uppercase tracking-[0.22em] text-white/45">
+            <CircleDollarSign size={14} className="text-[#ffd16f]" /> budget reality
+          </div>
+          <div className="grid grid-cols-3 gap-2">
+            <Cell label="expected" value={`€${totals.expected}`} muted />
+            <Cell label="actual" value={`€${animActual}`} accent="#ff5f8e" />
+            <Cell label="overrun" value={`+${overrun}%`} accent="#ffd16f" />
+          </div>
+        </div>
+
+        {/* simulator */}
+        <div className="border border-white/12 bg-[#0a0818]/70 p-5 backdrop-blur-md">
+          <div className="mb-3 flex items-center justify-between">
+            <span className="flex items-center gap-2 font-mono text-[0.56rem] uppercase tracking-[0.22em] text-white/45">
+              <ShieldAlert size={14} className="text-[#66d9ff]" /> night sim
+            </span>
+            <button
+              type="button"
+              onClick={run}
+              className="border border-white/16 px-3 py-1.5 font-mono text-[0.55rem] uppercase tracking-[0.18em] text-white/70 transition hover:border-[#66d9ff] hover:text-[#66d9ff]"
+            >
+              {running ? "running" : step >= 0 ? "rerun" : "start"}
+            </button>
+          </div>
+          <div className="mb-3 h-1 overflow-hidden bg-white/10">
+            <div
+              className="h-full transition-[width] duration-500"
+              style={{
+                width: `${chaos}%`,
+                background: chaos > 60 ? "#ff5f8e" : "#66d9ff",
+                boxShadow: chaos > 60 ? "0 0 16px #ff5f8e" : "0 0 12px #66d9ff",
+              }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            {NIGHT.slice(0, 4).map((e, i) => (
+              <div
+                key={e.t}
+                className="grid grid-cols-[3rem_1fr] gap-2 text-sm transition-opacity"
+                style={{ opacity: step >= i ? 1 : 0.32 }}
+              >
+                <span className="font-mono text-[0.62rem] text-white/40">{e.t}</span>
+                <span className="text-white/72">{e.text}</span>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-/* ─────────────────────────── budget ─────────────────────────── */
-
-const BUDGET_ITEMS = [
-  { label: "Αεροπορικά", expected: 250, actual: 310 },
-  { label: "Ξενοδοχείο", expected: 400, actual: 520 },
-  { label: "Φαγητό", expected: 200, actual: 380 },
-  { label: "Clubs", expected: 300, actual: 740 },
-  { label: "Τυχαίες Κακές Αποφάσεις", expected: 50, actual: 420 },
-  { label: "Stavros Tax", expected: 800, actual: 2000, hero: true },
-];
-
-function Budget() {
-  const [ref, armed] = useInView<HTMLDivElement>(0.3);
-  const totalExpected = BUDGET_ITEMS.reduce((s, b) => s + b.expected, 0);
-  const totalActual = BUDGET_ITEMS.reduce((s, b) => s + b.actual, 0);
-  const animatedTotal = useCountUp(totalActual, armed, 1600);
-  const max = Math.max(...BUDGET_ITEMS.map((b) => b.actual));
-
+function Cell({
+  label,
+  value,
+  muted,
+  accent,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+  accent?: string;
+}) {
   return (
-    <section id="budget" className="relative z-10 mx-auto max-w-7xl px-6 py-28 md:py-36" ref={ref}>
-      <SectionHeader
-        kicker="ΕΓΚΛΗΜΑΤΟΛΟΓΙΚΗ ΛΟΓΙΣΤΙΚΗ"
-        title="BUDGET REALITY CHECK"
-        subtitle="Τι είπαμε. Τι πραγματικά έγινε. Δεν δεχόμαστε ερωτήσεις."
-      />
-
-      <div className="reveal-on-scroll mt-14 grid gap-4 sm:grid-cols-3">
-        <div className="glass-strong rounded-2xl p-6">
-          <div className="font-mono text-[10px] tracking-[0.3em] text-muted-foreground">
-            ΠΡΟΫΠΟΛΟΓΙΣΜΟΣ
-          </div>
-          <div className="text-mega mt-2 text-4xl text-muted-foreground">
-            €{totalExpected.toLocaleString("el-GR")}
-          </div>
-        </div>
-        <div className="glass-strong rounded-2xl p-6 ring-1 ring-[var(--blood)]/40">
-          <div className="font-mono text-[10px] tracking-[0.3em] text-[var(--blood)]">
-            ΠΡΑΓΜΑΤΙΚΗ ΖΗΜΙΑ
-          </div>
-          <div className="text-mega mt-2 text-4xl tabular-nums text-foreground">
-            €{animatedTotal.toLocaleString("el-GR")}
-          </div>
-        </div>
-        <div className="glass-strong rounded-2xl p-6 ring-1 ring-[var(--gold)]/40">
-          <div className="font-mono text-[10px] tracking-[0.3em] text-[var(--gold)]">ΥΠΕΡΒΑΣΗ</div>
-          <div className="text-mega mt-2 text-4xl text-[var(--gold)]">
-            +{Math.round(((totalActual - totalExpected) / totalExpected) * 100)}%
-          </div>
-        </div>
+    <div className="border border-white/10 bg-white/[0.035] p-3">
+      <div className="font-mono text-[0.5rem] uppercase tracking-[0.2em] text-white/34">
+        {label}
       </div>
+      <div
+        className="mt-1.5 font-black tabular-nums leading-none tracking-[-0.04em] text-lg"
+        style={{ color: muted ? "rgba(255,255,255,.5)" : (accent ?? "#fff7e6") }}
+      >
+        {value}
+      </div>
+    </div>
+  );
+}
 
-      <div className="mt-6 space-y-4">
-        {BUDGET_ITEMS.map((item, i) => {
-          const expectedW = armed ? (item.expected / max) * 100 : 0;
-          const actualW = armed ? (item.actual / max) * 100 : 0;
-          const overrun = Math.round(((item.actual - item.expected) / item.expected) * 100);
+/** End-of-scroll closer that fades in as you reach the bottom. */
+function Closer({ progress }: { progress: number }) {
+  const o = band(progress, 0.95, 1);
+  if (o <= 0.001) return null;
+  return (
+    <div
+      className="pointer-events-none fixed inset-0 z-[36] flex flex-col items-center justify-center bg-[#050510]/70 backdrop-blur-sm"
+      style={{ opacity: o }}
+    >
+      <div className="flex items-center gap-2">
+        {CREW.map((a) => (
+          <span
+            key={a.id}
+            className="grid size-9 place-items-center border border-white/15 font-black text-xs text-[#050510]"
+            style={{ background: a.accent }}
+          >
+            {a.name.slice(0, 2)}
+          </span>
+        ))}
+      </div>
+      <div className="mt-7 font-black uppercase leading-none tracking-[-0.05em] text-[#fff7e6] text-[clamp(3rem,12vw,11rem)]">
+        02 · 10 · 26
+      </div>
+      <div className="mt-4 font-mono text-[0.7rem] uppercase tracking-[0.5em] text-[#ff5f8e]">
+        Worth it
+      </div>
+    </div>
+  );
+}
+
+/* ─────────────────────────── chrome ─────────────────────────── */
+
+function TopBar({ activeIndex }: { activeIndex: number }) {
+  return (
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-40 flex items-start justify-between p-5 font-mono text-[0.64rem] uppercase tracking-[0.32em] text-white/76 md:p-8">
+      <div>
+        <div className="text-white">BCN // 02.10.26</div>
+        <div className="mt-2 hidden text-white/38 md:block">Mission Dossier</div>
+      </div>
+      <div className="text-right text-white/52">
+        <span className="text-white">{CHAPTERS[activeIndex].n}</span> / 03
+      </div>
+    </header>
+  );
+}
+
+function RouteRail({ activeIndex, progress }: { activeIndex: number; progress: number }) {
+  return (
+    <aside className="pointer-events-none fixed inset-x-0 bottom-6 z-40 mx-auto hidden w-[min(58rem,86vw)] md:block">
+      <div className="mb-3 flex items-center justify-between font-mono text-[0.6rem] uppercase tracking-[0.24em] text-white/48">
+        <span>Barcelona route</span>
+        <span>{String(Math.round(progress * 100)).padStart(2, "0")}%</span>
+      </div>
+      <div className="relative h-px bg-white/16">
+        <div
+          className="absolute inset-y-0 left-0 bg-[#fff0bd]"
+          style={{ width: `${progress * 100}%`, boxShadow: "0 0 18px rgba(255,196,95,.5)" }}
+        />
+        {CHAPTERS.map((ch, i) => {
+          const left = `${(i / (CHAPTERS.length - 1)) * 100}%`;
+          const on = i === activeIndex;
           return (
             <div
-              key={item.label}
-              className={cn(
-                "reveal-on-scroll rounded-2xl glass p-5 md:p-7",
-                item.hero && "ring-1 ring-[var(--neon)] shadow-neon",
-              )}
-              style={{ transitionDelay: `${i * 70}ms` }}
+              key={ch.n}
+              className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2"
+              style={{ left }}
             >
-              <div className="flex flex-wrap items-baseline justify-between gap-3">
-                <h4
-                  className={cn(
-                    "text-mega text-2xl md:text-3xl",
-                    item.hero ? "text-[var(--neon)]" : "text-foreground",
-                  )}
-                >
-                  {item.label}
-                </h4>
-                <div className="flex items-center gap-4 font-mono text-xs">
-                  <span className="text-muted-foreground">ΠΡΟΒΛΕΨΗ €{item.expected}</span>
-                  <span className="text-[var(--blood)]">ΠΡΑΓΜΑΤΙΚΟ €{item.actual}</span>
-                  <span className="text-[var(--gold)]">+{overrun}%</span>
-                </div>
+              <div
+                className="size-2.5 border border-[#fff0bd]"
+                style={{
+                  background: on ? "#ffd16f" : "#050510",
+                  boxShadow: on ? "0 0 18px #ffd16f" : "none",
+                }}
+              />
+              <div className="mt-3 -translate-x-1/2 whitespace-nowrap font-mono text-[0.55rem] uppercase tracking-[0.16em] text-white/46">
+                {ch.place}
               </div>
-              <div className="mt-4 space-y-2">
-                <div className="h-2 overflow-hidden rounded-full bg-[oklch(1_0_0/0.05)]">
-                  <div
-                    className="h-full rounded-full bg-muted-foreground/60 transition-[width] duration-1000 ease-out"
-                    style={{ width: `${expectedW}%`, transitionDelay: `${i * 100}ms` }}
-                  />
-                </div>
-                <div className="h-3 overflow-hidden rounded-full bg-[oklch(1_0_0/0.05)]">
-                  <div
-                    className="h-full rounded-full transition-[width] duration-[1400ms] ease-out"
-                    style={{
-                      width: `${actualW}%`,
-                      transitionDelay: `${i * 100 + 200}ms`,
-                      background: item.hero
-                        ? "linear-gradient(90deg, var(--neon), var(--blood))"
-                        : "linear-gradient(90deg, var(--blood), var(--gold))",
-                      boxShadow: item.hero ? "0 0 20px var(--neon)" : "none",
-                    }}
-                  />
-                </div>
-              </div>
-              {item.hero && (
-                <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-[oklch(0_0_0/0.4)] px-3 py-1 font-mono text-xs tracking-wider text-[var(--gold)]">
-                  ΤΕΛΙΚΗ ΔΗΛΩΣΗ: «Worth it.»
-                </div>
-              )}
             </div>
           );
         })}
       </div>
-    </section>
+    </aside>
   );
 }
 
-/* ─────────────────────────── night simulator ─────────────────────────── */
+/* ─────────────────────────── page ─────────────────────────── */
 
-const TIMELINE = [
-  { t: "22:00", text: "Όλοι λένε ότι απόψε θα είναι chill." },
-  { t: "23:30", text: "Πρώτη κακή οικονομική απόφαση." },
-  { t: "01:00", text: "Ο Σταύρος αρχίζει να μιλά διεθνείς ασυναρτησίες." },
-  { t: "02:15", text: "Ο Γιώργος γίνεται comedian." },
-  { t: "03:00", text: "Ο Στέφανος ξεκλειδώνει tango." },
-  { t: "04:30", text: "Κάποιος λέει «άλλο ένα μέρος»." },
-  { t: "06:00", text: "Κανείς δεν ξέρει πώς φτάσαμε εδώ." },
-];
+function V1() {
+  const reduced = useReduced();
+  const [progress, progressRef] = useScrollProgress();
+  const mouseRef = useMouseRef(reduced);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
 
-function NightSimulator() {
-  const [step, setStep] = useState(-1);
-  const timers = useRef<number[]>([]);
-  const clearAll = useCallback(() => {
-    timers.current.forEach((id) => clearTimeout(id));
-    timers.current = [];
-  }, []);
-
-  const start = () => {
-    clearAll();
-    setStep(0);
-    const delay = prefersReducedMotion() ? 120 : 900;
-    TIMELINE.forEach((_, i) => {
-      timers.current.push(window.setTimeout(() => setStep(i), i * delay));
-    });
-  };
-  const reset = () => {
-    clearAll();
-    setStep(-1);
-  };
-
-  useEffect(() => () => clearAll(), [clearAll]);
-
-  const running = step >= 0;
-  const done = step >= TIMELINE.length - 1;
-  const chaos = step < 0 ? 0 : Math.round(((step + 1) / TIMELINE.length) * 100);
+  const activeIndex = getActiveIndex(progress);
 
   return (
-    <section className="relative z-10 mx-auto max-w-7xl px-6 py-28 md:py-36">
-      <SectionHeader
-        kicker="ΠΡΟΣΟΜΟΙΩΣΗ · LIVE FEED"
-        title="NIGHT OUT SIMULATOR"
-        subtitle="Πάτα start. Δες μια κανονική βραδιά να καταρρέει σε slow motion."
-      />
-      <div className="reveal-on-scroll mt-14 rounded-3xl glass-strong shadow-elegant p-8 md:p-12">
-        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
-          <div className="font-mono text-xs tracking-[0.3em] text-muted-foreground">
-            ΚΑΤΑΣΤΑΣΗ: {step < 0 ? "STANDBY" : done ? "ΔΙΑΛΥΣΗ" : "ΚΛΙΜΑΚΩΣΗ"}
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={start}
-              className="rounded-full bg-[var(--neon)] px-6 py-2.5 font-mono text-xs tracking-[0.2em] text-primary-foreground shadow-neon transition-transform hover:scale-[1.03]"
-            >
-              {running ? "ΞΑΝΑ" : "ΞΕΚΙΝΑ ΤΗ ΝΥΧΤΑ"}
-            </button>
-            {running && (
-              <button
-                onClick={reset}
-                className="rounded-full border border-border px-6 py-2.5 font-mono text-xs tracking-[0.2em] text-muted-foreground transition-colors hover:text-foreground"
-              >
-                RESET
-              </button>
-            )}
-          </div>
-        </div>
+    <main
+      className="v1-root relative bg-[#050510] text-[#fff7e6]"
+      style={{ minHeight: `${SCROLL_VH}vh` }}
+    >
+      <style>{`
+        .v1-root { scrollbar-color: rgba(255,255,255,.22) transparent; }
+        @keyframes v1-in {
+          from { opacity: 0; transform: translate3d(0, 30px, 0); filter: blur(10px); }
+          to   { opacity: 1; transform: translate3d(0, 0, 0); filter: blur(0); }
+        }
+        @keyframes v1-card {
+          from { opacity: 0; transform: translate3d(0, 26px, 0) scale(.98); }
+          to   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+        }
+        @keyframes v1-glow {
+          0%,100% { opacity: .5; transform: scale(1); }
+          50%     { opacity: .85; transform: scale(1.06); }
+        }
+      `}</style>
 
-        {/* Chaos meter */}
-        <div className="mb-8">
-          <div className="flex justify-between font-mono text-[10px] tracking-[0.3em] text-muted-foreground">
-            <span>CHAOS METER</span>
-            <span className="text-foreground tabular-nums">{chaos}%</span>
-          </div>
-          <div className="mt-2 h-2 overflow-hidden rounded-full bg-[oklch(1_0_0/0.06)]">
-            <div
-              className="h-full rounded-full transition-[width] duration-700 ease-out"
-              style={{
-                width: `${chaos}%`,
-                background: "linear-gradient(90deg, var(--gold), var(--neon), var(--blood))",
-                boxShadow: chaos > 60 ? "0 0 16px var(--blood)" : "none",
-              }}
-            />
-          </div>
-        </div>
+      {/* cinematic city backdrop */}
+      <CityFilm progress={progress} />
 
-        <div className="relative">
-          <div className="absolute bottom-0 left-[52px] top-0 w-px bg-border md:left-[72px]" />
-          <div className="space-y-5">
-            {TIMELINE.map((e, i) => {
-              const active = step >= i;
-              return (
-                <div
-                  key={e.t}
-                  className={cn(
-                    "flex items-center gap-6 transition-all duration-500",
-                    active ? "translate-x-0 opacity-100" : "-translate-x-2 opacity-25",
-                  )}
-                >
-                  <div className="w-[40px] text-right font-mono text-sm tabular-nums text-muted-foreground md:w-[60px]">
-                    {e.t}
-                  </div>
-                  <div
-                    className={cn(
-                      "relative z-10 size-4 shrink-0 rounded-full border-2 transition-all",
-                      active
-                        ? "border-[var(--neon)] bg-[var(--neon)] shadow-neon"
-                        : "border-border bg-background",
-                    )}
-                  />
-                  <div
-                    className={cn(
-                      "text-base md:text-xl",
-                      active ? "text-foreground" : "text-muted-foreground",
-                    )}
-                  >
-                    {e.text}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-/* ─────────────────────────── evidence ─────────────────────────── */
-
-const EVIDENCE = [
-  { label: "Στοιχεία Παραλίας", img: beachImg },
-  { label: "Στοιχεία Club", img: clubImg },
-  { label: "Οικονομική Ζημιά", img: tapasImg },
-  { label: "Εγκλήματα Διαμερίσματος", img: sidequestImg },
-  { label: "Ανεξήγητες Στιγμές", img: rooftopImg },
-  { label: "Ψίθυροι Gothic Quarter", img: gothicImg },
-];
-
-function Evidence() {
-  return (
-    <section id="evidence" className="relative z-10 mx-auto max-w-7xl px-6 py-28 md:py-36">
-      <SectionHeader
-        kicker="ΑΡΧΕΙΟ · ΑΠΟΡΡΗΤΟ ΥΛΙΚΟ"
-        title="EVIDENCE LOCKER"
-        subtitle="Οι φωτογραφίες θα ανέβουν μετά την αποστολή. Πιθανώς με λογοκρισία."
-      />
-      <div className="mt-14 grid grid-cols-2 gap-3 md:grid-cols-3 md:gap-5">
-        {EVIDENCE.map((e, i) => (
-          <div
-            key={e.label}
-            className="reveal-on-scroll group relative aspect-[4/5] overflow-hidden rounded-2xl shadow-elegant"
-            style={{ transitionDelay: `${i * 50}ms` }}
-          >
-            <img
-              src={e.img}
-              alt={e.label}
-              loading="lazy"
-              width={1280}
-              height={1280}
-              className="absolute inset-0 size-full object-cover opacity-50 blur-sm grayscale transition-all duration-500 group-hover:scale-105 group-hover:opacity-90 group-hover:blur-0 group-hover:grayscale-0"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-[oklch(0.08_0.04_265)] to-transparent" />
-            <div className="absolute inset-0 flex flex-col justify-between p-5">
-              <div className="flex items-center gap-2 font-mono text-[10px] tracking-[0.25em] text-[var(--neon)]">
-                <span className="size-1.5 animate-pulse rounded-full bg-[var(--neon)]" />
-                ΑΠΟΡΡΗΤΟ
-              </div>
-              <div>
-                <div className="text-mega text-2xl">{e.label}</div>
-                <div className="mt-1 font-mono text-[10px] tracking-wider text-muted-foreground">
-                  ΕΚΚΡΕΜΕΙ UPLOAD · ΜΕΤΑ ΤΙΣ 02.10.26
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/* ─────────────────────────── rules ─────────────────────────── */
-
-const RULES = [
-  "Καμία βαρετή νύχτα.",
-  "Καμία πρόωρη δικαιολογία.",
-  "Δεν παριστάνουμε ότι τα €40 ήταν «τίποτα».",
-  "Όλες οι legendary στιγμές πρέπει να καταγράφονται.",
-  "Αν κάποιος πει «ένα ποτό», λέει ψέματα.",
-  "Οι συναισθηματικές αντιδράσεις στην Barceloneta επιτρέπονται.",
-  "Το group chat αποφασίζει την ιστορία.",
-];
-
-function Rules() {
-  return (
-    <section className="relative z-10 mx-auto max-w-7xl px-6 py-28 md:py-36">
-      <SectionHeader kicker="ΔΟΓΜΑ · ΜΗ ΔΙΑΠΡΑΓΜΑΤΕΥΣΙΜΟ" title="ΚΑΝΟΝΕΣ ΤΟΥ ΤΑΞΙΔΙΟΥ" />
-      <div className="mt-14 grid gap-3 md:grid-cols-2">
-        {RULES.map((r, i) => (
-          <div
-            key={r}
-            className="reveal-on-scroll flex items-center gap-5 rounded-xl glass-strong shadow-elegant px-6 py-5 transition-transform hover:translate-x-1"
-            style={{ transitionDelay: `${i * 60}ms` }}
-          >
-            <div className="text-mega w-14 text-4xl tabular-nums text-[var(--neon)]">
-              {String(i + 1).padStart(2, "0")}
-            </div>
-            <div className="text-lg text-foreground md:text-xl">{r}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-/* ─────────────────────────── final cta ─────────────────────────── */
-
-function FinalCTA() {
-  const { days, mounted } = useCountdown(TRIP_DATE);
-  return (
-    <section className="relative z-10 mx-auto max-w-7xl px-6 py-32 md:py-40">
-      <div className="reveal-on-scroll relative overflow-hidden rounded-3xl glass-strong shadow-elegant p-10 text-center md:p-20">
+      {/* hero atmosphere glow — only meaningful in act 0, sits behind the 3D core */}
+      <div
+        className="pointer-events-none fixed inset-0 z-[5] flex items-center justify-center"
+        style={{ opacity: 1 - band(progress, 0.0, 0.18) }}
+        aria-hidden
+      >
         <div
-          aria-hidden
-          className="absolute inset-0 -z-10 opacity-40"
-          style={{
-            background:
-              "radial-gradient(ellipse at 50% 0%, oklch(0.72 0.3 350 / 0.6), transparent 60%), radial-gradient(ellipse at 50% 100%, oklch(0.55 0.24 25 / 0.5), transparent 60%)",
-          }}
+          className={
+            "h-[60vmin] w-[60vmin] rounded-full blur-[80px] " +
+            (reduced ? "" : "animate-[v1-glow_6s_ease-in-out_infinite]")
+          }
+          style={{ background: "radial-gradient(circle, rgba(255,79,147,0.5), transparent 70%)" }}
         />
-        <div className="font-mono text-[11px] tracking-[0.4em] text-[var(--gold)]">
-          T-MINUS {mounted ? days : "--"} ΜΕΡΕΣ
-        </div>
-        <h2 className="text-mega mt-6 text-[clamp(2.4rem,8vw,7rem)] text-gradient-sunset">
-          <Lines
-            lines={[
-              { text: "Η 2 ΟΚΤΩΒΡΙΟΥ ΔΕΝ ΕΙΝΑΙ ΗΜΕΡΟΜΗΝΙΑ." },
-              { text: "ΕΙΝΑΙ ΠΡΟΕΙΔΟΠΟΙΗΣΗ.", className: "text-foreground/95" },
-            ]}
-          />
-        </h2>
-
-        <div className="mt-8 flex justify-center gap-3">
-          {SQUAD.map((p) => (
-            <div
-              key={p.id}
-              className="size-12 overflow-hidden rounded-full ring-2 ring-background md:size-14"
-              style={{ boxShadow: `0 0 0 1px ${p.accent}` }}
-              title={p.name}
-            >
-              <Portrait
-                id={p.id}
-                name={p.name}
-                accent={p.accent}
-                className="size-full duotone"
-                small
-              />
-            </div>
-          ))}
-        </div>
-
-        <p className="mt-6 max-w-xl mx-auto text-muted-foreground">
-          Evag. Σταύρος. Γιώργος. Στέφανος. Η πόλη έχει ειδοποιηθεί.
-        </p>
-        <a
-          href="#top"
-          className="mt-10 inline-flex items-center gap-3 rounded-full bg-[var(--neon)] px-10 py-5 font-mono text-sm tracking-[0.25em] text-primary-foreground shadow-neon animate-pulse-neon transition-transform hover:scale-[1.02]"
-        >
-          BARCELONA LOADING
-          <span className="flex gap-1">
-            <span
-              className="size-1 animate-pulse rounded-full bg-current"
-              style={{ animationDelay: "0ms" }}
-            />
-            <span
-              className="size-1 animate-pulse rounded-full bg-current"
-              style={{ animationDelay: "200ms" }}
-            />
-            <span
-              className="size-1 animate-pulse rounded-full bg-current"
-              style={{ animationDelay: "400ms" }}
-            />
-          </span>
-        </a>
       </div>
-    </section>
-  );
-}
 
-function Footer() {
-  return (
-    <footer className="relative z-10 border-t border-border/40 py-10">
-      <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4 px-6 font-mono text-[10px] tracking-[0.3em] text-muted-foreground">
-        <div>© ΑΠΟΣΤΟΛΗ BCN · ΑΠΟΡΡΗΤΟ · 04 ΠΡΑΚΤΟΡΕΣ</div>
-        <div>WORTH IT · ΠΑΝΤΑ</div>
+      {/* WebGL centerpiece (transparent, floats over the city) */}
+      <div className="fixed inset-0 z-10" aria-hidden>
+        {mounted && <CoreCanvas progressRef={progressRef} mouseRef={mouseRef} reduced={reduced} />}
       </div>
-    </footer>
+
+      {/* film grain + vignette */}
+      <div
+        className="pointer-events-none fixed inset-0 z-20 mix-blend-overlay"
+        style={{
+          opacity: 0.05,
+          backgroundImage:
+            "url(\"data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>\")",
+        }}
+        aria-hidden
+      />
+
+      {/* active stage */}
+      <div key={activeIndex}>
+        {activeIndex === 0 && <HeroStage reduced={reduced} />}
+        {activeIndex === 1 && <CrewStage reduced={reduced} />}
+        {activeIndex === 2 && <MapStage reduced={reduced} />}
+        {activeIndex === 3 && <NightStage active reduced={reduced} />}
+      </div>
+
+      <Closer progress={progress} />
+      <TopBar activeIndex={activeIndex} />
+      <RouteRail activeIndex={activeIndex} progress={progress} />
+    </main>
   );
 }
